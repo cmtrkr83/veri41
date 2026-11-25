@@ -1368,7 +1368,7 @@
               <span class="msw-slider"></span>
             </label>
             <span id="notifStatus" style="font-size:13px;color:var(--text-2);">Pasif</span>
-            <input type="email" id="notifEmail" placeholder="bildirim@okul.k12.tr" disabled style="min-width:280px;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);" />
+            <input type="email" id="notifEmail" placeholder="bildirim@okul.k12.tr" disabled onchange="saveNotif()" style="min-width:280px;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);" />
           </div>
         </div>
         <div id="notifMessage" class="message" style="margin-top:12px;"></div>
@@ -1559,6 +1559,7 @@
         const data = await res.json().catch(() => ({}));
         if (res.ok) {
           if (msg) { msg.textContent = ""; msg.className = "message"; }
+          showToast("Bildirim e-postası kaydedildi.", "success");
         } else {
           if (res.status !== 401 && msg) {
             msg.textContent = data.error || "Kaydedilemedi.";
