@@ -286,16 +286,31 @@ function loadSettings() {
       if (raw && typeof raw === "object") {
         const modules = {};
         for (const k of MODULE_KEYS) modules[k] = !raw.modules || raw.modules[k] !== false;
-        return { maintenance: raw.maintenance === true, modules };
+        return {
+          maintenance: raw.maintenance === true,
+          modules,
+          notificationEnabled: raw.notificationEnabled === true,
+          notificationEmail: (raw.notificationEmail || "").trim(),
+        };
       }
     }
   } catch (_) {}
-  return { maintenance: false, modules: Object.fromEntries(MODULE_KEYS.map((k) => [k, true])) };
+  return {
+    maintenance: false,
+    modules: Object.fromEntries(MODULE_KEYS.map((k) => [k, true])),
+    notificationEnabled: false,
+    notificationEmail: "",
+  };
 }
 function saveSettings(s) {
   const modules = {};
   for (const k of MODULE_KEYS) modules[k] = !s || !s.modules || s.modules[k] !== false;
-  atomicSaveJson(SETTINGS_FILE, JSON.stringify({ maintenance: !!(s && s.maintenance), modules }, null, 2));
+  atomicSaveJson(SETTINGS_FILE, JSON.stringify({
+    maintenance: !!(s && s.maintenance),
+    modules,
+    notificationEnabled: !!(s && s.notificationEnabled === true),
+    notificationEmail: (s && s.notificationEmail ? String(s.notificationEmail).trim() : ""),
+  }, null, 2));
 }
 function isMaintenanceOn() {
   return loadSettings().maintenance === true;
@@ -399,6 +414,48 @@ async function sendOtpEmail(email, otp) {
         <p style="color: #999; font-size: 12px;">Bu mesajı siz talep etmediyseniz dikkate almayın.</p>
       </div>
     `,
+  });
+}
+
+// Yeni talep/şikayet/öneri/itiraz oluşturulduğunda ayarlarda tanımlı tek bir adrese
+// metin tabanlı (ek / resim içermeyen) bildirim e-postası gönderir.
+// Gönderim sadece ayarlardan "notificationEnabled" açık ve "notificationEmail" dolu olduğunda gerçekleşir.
+async function sendNewRequestEmail(entry) {
+  const s = loadSettings();
+  if (!s.notificationEnabled) return;
+  const to = (s.notificationEmail || "").trim();
+  if (!to) return; // aktif ama adres tanımlanmamışsa mail gitmesin
+
+  const typeLabel = requestTypeLabels[entry.type] || entry.type;
+  const submittedAt = new Date(entry.submittedAt).toLocaleString("tr-TR");
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background:#fff;">
+      <h2 style="color:#8b0000; margin-top:0;">Yeni Talep / Şikayet / Öneri / İtiraz</h2>
+      <table style="width:100%; border-collapse:collapse; margin:16px 0; font-size:14px; color:#333;">
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; width:30%; font-weight:600; color:#8b0000;">Tür</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${typeLabel}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">Başlık</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${entry.title}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">Gönderen E-posta</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${entry.submittedBy}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">Okul</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${entry.schoolName || "-"}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">İl / İlçe</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${entry.city || "-"}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">Tarih</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${submittedAt}</td></tr>
+        <tr><td style="padding:6px 8px;border-bottom:1px solid #eee; font-weight:600; color:#8b0000;">Durum</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">${entry.status}</td></tr>
+      </table>
+      <div style="font-weight:600; color:#8b0000; margin-bottom:8px;">Talep Metni:</div>
+      <div style="background:#fafafa;border:1px solid #eee;border-radius:6px;padding:14px;white-space:pre-wrap;word-break:break-word;color:#222;">
+        ${entry.description}
+      </div>
+      <p style="color:#999; font-size:12px; margin-top:16px;">
+        Bu e-posta otomatik olarak gönderilmiştir. İçerikte dosya ek veya resim bulunmamaktadır. Eklerin görüntülenmesi için sisteme giriş yapabilirsiniz.
+      </p>
+    </div>
+  `;
+
+  await transporter.sendMail({
+    from: `"Sistem Bildirimleri" <${process.env.SMTP_USER}>`,
+    to,
+    subject: `[KODM] Yeni ${typeLabel} - ${entry.title}`,
+    html,
   });
 }
 
@@ -2735,6 +2792,8 @@ app.post("/api/requests", (req, res) => {
     list.push(entry);
     saveRequests(list);
     appendLog(makeLog("request_create", decoded.email, `"${entry.title}" talebi oluşturuldu (${entry.type}).`, req));
+    // Yeni talep oluştuğunda yöneticilere metin tabanlı (eksiz) bildirim e-postası gönder
+    sendNewRequestEmail(entry).catch((err) => console.error("Yeni talep mail bildirimi hatası:", err.message));
     res.status(201).json(entry);
   });
 });
@@ -3444,17 +3503,30 @@ app.put("/api/settings", (req, res) => {
   const decoded = requireAdmin(req, res);
   if (!decoded) return;
   const prev = loadSettings();
-  const next = { maintenance: req.body && req.body.maintenance === true };
+  const next = {
+    maintenance: req.body && req.body.maintenance === true,
+    notificationEnabled: prev.notificationEnabled,
+    notificationEmail: prev.notificationEmail,
+  };
   if (req.body && typeof req.body.modules === "object" && req.body.modules) {
     next.modules = {};
     for (const k of MODULE_KEYS) next.modules[k] = req.body.modules[k] !== false;
   } else {
     next.modules = prev.modules;
   }
+  if (req.body && typeof req.body.notificationEnabled === "boolean") {
+    next.notificationEnabled = req.body.notificationEnabled;
+  }
+  if (req.body && typeof req.body.notificationEmail === "string") {
+    next.notificationEmail = req.body.notificationEmail.trim();
+  }
   saveSettings(next);
   appendLog(makeLog(next.maintenance ? "maintenance_on" : "maintenance_off", decoded.email, next.maintenance ? "Sistem bakıma alındı." : "Sistem tekrar açıldı.", req));
   const changed = MODULE_KEYS.filter((k) => (prev.modules || {})[k] !== next.modules[k]);
   if (changed.length) appendLog(makeLog("module_change", decoded.email, `Modül durumu değişti: ${changed.map((k) => k + "=" + (next.modules[k] ? "açık" : "kapalı")).join(", ")}.`, req));
+  if (prev.notificationEnabled !== next.notificationEnabled || prev.notificationEmail !== next.notificationEmail) {
+    appendLog(makeLog("notification_change", decoded.email, `Talep bildirim e-postası: ${next.notificationEnabled ? "aktif (" + next.notificationEmail + ")" : "pasif"}.`, req));
+  }
   res.json(next);
 });
 

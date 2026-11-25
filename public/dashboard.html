@@ -1357,6 +1357,21 @@
           </button>
         </div>
         <div id="settingsMessage" class="message" style="margin-top:12px;"></div>
+        <div class="announcement-item" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:260px;">
+            <h4><i class="fa-solid fa-envelope" style="color:#8b0000;"></i> Talep Bildirim E-postası</h4>
+            <p id="notifDesc" style="font-size:13px;color:var(--muted);margin:0;">Açık olduğunda yeni talep/şikayet/öneri/itiraz oluşturulduğunda belirtilen adrese metin tabanlı (eksiz) bildirim mailı gönderilir.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <label class="msw-switch" style="cursor:pointer;">
+              <input type="checkbox" id="notifToggle" onchange="toggleNotif()" />
+              <span class="msw-slider"></span>
+            </label>
+            <span id="notifStatus" style="font-size:13px;color:var(--text-2);">Pasif</span>
+            <input type="email" id="notifEmail" placeholder="bildirim@okul.k12.tr" disabled style="min-width:280px;padding:8px 12px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);" />
+          </div>
+        </div>
+        <div id="notifMessage" class="message" style="margin-top:12px;"></div>
         <div class="report-card" style="margin-top:20px;">
           <h4><i class="fa-solid fa-toggle-on"></i> Modüller</h4>
           <p style="font-size:13px;color:var(--muted);margin:0;">Kapalı modüller kullanıcılara bilgi mesajı gösterir; yöneticiler etkilenmez.</p>
@@ -1473,6 +1488,7 @@
         const s = await res.json();
         paintMaintenance(s.maintenance === true);
         paintModules(s.modules || {});
+        paintNotif(s);
         if (msg) { msg.textContent = ""; msg.className = "message"; }
       } catch {
         if (msg) { msg.textContent = "Ayarlar yüklenemedi."; msg.className = "message error show"; }
@@ -1499,6 +1515,59 @@
           + '<span class="msw-desc">' + desc + '</span></div></div>'
           + '<label class="msw-switch"><input type="checkbox" class="mod-toggle" value="' + k + '"' + (on ? " checked" : "") + ' onchange="saveModules()" aria-label="' + label + '" /><span class="msw-slider"></span></label></div>';
       }).join("");
+    }
+
+    function paintNotif(s) {
+      const toggle = document.getElementById("notifToggle");
+      const emailInput = document.getElementById("notifEmail");
+      const status = document.getElementById("notifStatus");
+      if (!toggle || !emailInput || !status) return;
+      const on = s.notificationEnabled === true;
+      toggle.checked = on;
+      emailInput.disabled = !on;
+      emailInput.value = s.notificationEmail || "";
+      status.textContent = on ? "Aktif" : "Pasif";
+      status.style.color = on ? "var(--brand-ink, #8b0000)" : "var(--text-2)";
+    }
+
+    function toggleNotif() {
+      const toggle = document.getElementById("notifToggle");
+      const emailInput = document.getElementById("notifEmail");
+      const status = document.getElementById("notifStatus");
+      if (!toggle || !emailInput || !status) return;
+      const on = toggle.checked;
+      emailInput.disabled = !on;
+      status.textContent = on ? "Aktif" : "Pasif";
+      status.style.color = on ? "var(--brand-ink, #8b0000)" : "var(--text-2)";
+      saveNotif();
+    }
+
+    async function saveNotif() {
+      const msg = document.getElementById("notifMessage");
+      const toggle = document.getElementById("notifToggle");
+      const emailInput = document.getElementById("notifEmail");
+      if (!toggle || !emailInput) return;
+      try {
+        const res = await apiFetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            notificationEnabled: toggle.checked,
+            notificationEmail: emailInput.value.trim(),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          if (msg) { msg.textContent = ""; msg.className = "message"; }
+        } else {
+          if (res.status !== 401 && msg) {
+            msg.textContent = data.error || "Kaydedilemedi.";
+            msg.className = "message error show";
+          }
+        }
+      } catch {
+        if (msg) { msg.textContent = "Bağlantı hatası."; msg.className = "message error show"; }
+      }
     }
 
     async function saveModules() {
